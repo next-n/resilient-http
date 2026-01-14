@@ -22,12 +22,22 @@ export interface BreakerOptions {
   cooldownMs: number;          // e.g. 5000
   halfOpenProbeCount: number;  // e.g. 3
 }
+export interface MicroCacheOptions {
+  enabled: boolean;
+  ttlMs?: number;       // default 3000
+  maxEntries?: number;  // default 500
+  /**
+   * Default: GET + normalized URL (incl query).
+   * Use this to include tenant/user headers if responses vary.
+   */
+  keyFn?: (req: ResilientRequest) => string;
+}
 
 export interface ResilientHttpClientOptions {
-  maxInFlight: number;         // e.g. 20
-  maxQueue: number;            // e.g. 200
-  enqueueTimeoutMs: number;    // e.g. 2000
-  requestTimeoutMs: number;    // e.g. 1500
+  maxInFlight: number;
+  maxQueue: number;
+  enqueueTimeoutMs: number;
+  requestTimeoutMs: number;
   breaker: BreakerOptions;
 
   /**
@@ -35,4 +45,11 @@ export interface ResilientHttpClientOptions {
    * Default: (req) => new URL(req.url).host
    */
   keyFn?: (req: ResilientRequest) => string;
+
+  /**
+   * GET-only micro-cache + singleflight.
+   * When enabled, concurrent identical GETs share one upstream call,
+   * then cache successful 2xx results for a short TTL.
+   */
+  microCache?: MicroCacheOptions;
 }

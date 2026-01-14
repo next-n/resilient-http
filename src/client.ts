@@ -4,21 +4,55 @@ import { ConcurrencyLimiter } from "./limiter.js";
 import { doHttpRequest } from "./http.js";
 import { CircuitBreaker } from "./breaker.js";
 import { CircuitOpenError } from "./errors.js";
-import type { ResilientHttpClientOptions, ResilientRequest, ResilientResponse } from "./types.js";
+import type {
+  MicroCacheOptions,
+  ResilientHttpClientOptions,
+  ResilientRequest,
+  ResilientResponse,
+} from "./types.js";
 
-function defaultKeyFn(req: ResilientRequest): string {
+function defaultBreakerKeyFn(req: ResilientRequest): string {
   return new URL(req.url).host;
+}
+
+function normalizeUrlForKey(rawUrl: string): string {
+  // Normalize enough to avoid trivial cache misses:
+  // - remove default ports (:80, :443)
+  // - normalize hostname casing
+  // - keep path + query exactly (order matters; we intentionally do NOT reorder query params)
+  const u = new URL(rawUrl);
+  u.hostname = u.hostname.toLowerCase();
+
+  const isHttpDefault = u.protocol === "http:" && u.port === "80";
+  const isHttpsDefault = u.protocol === "https:" && u.port === "443";
+  if (isHttpDefault || isHttpsDefault) u.port = "";
+
+  return u.toString();
+}
+
+function defaultMicroCacheKeyFn(req: ResilientRequest): string {
+  return `GET ${normalizeUrlForKey(req.url)}`;
 }
 
 function genRequestId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+type CacheEntry = {
+  expiresAt: number;
+  value: ResilientResponse;
+};
+
 export class ResilientHttpClient extends EventEmitter {
   private readonly limiter: ConcurrencyLimiter;
   private readonly breaker: CircuitBreaker;
   private readonly requestTimeoutMs: number;
-  private readonly keyFn: (req: ResilientRequest) => string;
+  private readonly breakerKeyFn: (req: ResilientRequest) => string;
+
+  // micro-cache
+  private readonly microCache?: Required<Pick<MicroCacheOptions, "enabled" | "ttlMs" | "maxEntries" | "keyFn">>;
+  private cache?: Map<string, CacheEntry>;
+  private inFlight?: Map<string, Promise<ResilientResponse>>;
 
   constructor(private readonly opts: ResilientHttpClientOptions) {
     super();
@@ -31,14 +65,112 @@ export class ResilientHttpClient extends EventEmitter {
 
     this.breaker = new CircuitBreaker(opts.breaker);
     this.requestTimeoutMs = opts.requestTimeoutMs;
-    this.keyFn = opts.keyFn ?? defaultKeyFn;
+    this.breakerKeyFn = opts.keyFn ?? defaultBreakerKeyFn;
+
+    const mc = opts.microCache;
+    if (mc?.enabled) {
+      this.microCache = {
+        enabled: true,
+        ttlMs: mc.ttlMs ?? 3000,
+        maxEntries: mc.maxEntries ?? 500,
+        keyFn: mc.keyFn ?? defaultMicroCacheKeyFn,
+      };
+      this.cache = new Map();
+      this.inFlight = new Map();
+    }
   }
 
   async request(req: ResilientRequest): Promise<ResilientResponse> {
-    const key = this.keyFn(req);
+    // Micro-cache: GET-only
+    if (this.microCache?.enabled && req.method === "GET") {
+      return this.requestWithMicroCache(req);
+    }
+    return this.existingPipeline(req);
+  }
+
+  private async requestWithMicroCache(req: ResilientRequest): Promise<ResilientResponse> {
+    const mc = this.microCache!;
+    const cache = this.cache!;
+    const inFlight = this.inFlight!;
+
+    const key = mc.keyFn(req);
+    const now = Date.now();
+
+    // 1) fresh cache hit
+    const hit = cache.get(key);
+    if (hit && now < hit.expiresAt) {
+      // return a safe copy of body buffer to avoid shared mutation surprises
+      return {
+        status: hit.value.status,
+        headers: hit.value.headers,
+        body: new Uint8Array(hit.value.body),
+      };
+    }
+
+    // 2) singleflight: await existing in-flight
+    const existing = inFlight.get(key);
+    if (existing) {
+      const res = await existing;
+      return {
+        status: res.status,
+        headers: res.headers,
+        body: new Uint8Array(res.body),
+      };
+    }
+
+    // 3) create new in-flight pipeline call
+    const p = (async () => {
+      const res = await this.existingPipeline(req);
+
+      // cache only 2xx by default
+      if (res.status >= 200 && res.status < 300) {
+        this.evictIfNeeded(cache, mc.maxEntries);
+
+        cache.set(key, {
+          value: {
+            status: res.status,
+            headers: res.headers,
+            body: new Uint8Array(res.body), // store a copy
+          },
+          expiresAt: Date.now() + mc.ttlMs,
+        });
+      }
+
+      return res;
+    })();
+
+    inFlight.set(key, p);
+
+    try {
+      const res = await p;
+      return {
+        status: res.status,
+        headers: res.headers,
+        body: new Uint8Array(res.body),
+      };
+    } finally {
+      inFlight.delete(key);
+    }
+  }
+
+  private evictIfNeeded(cache: Map<string, CacheEntry>, maxEntries: number): void {
+    // Map preserves insertion order. Delete oldest entries first.
+    while (cache.size >= maxEntries) {
+      const oldestKey = cache.keys().next().value as string | undefined;
+      if (!oldestKey) break;
+      cache.delete(oldestKey);
+    }
+  }
+
+  /**
+   * Your current pipeline: breaker decision -> queue/limiter -> http timeout -> breaker update -> events.
+   * Unchanged logic (just extracted into a method).
+   */
+  private async existingPipeline(req: ResilientRequest): Promise<ResilientResponse> {
+    const key = this.breakerKeyFn(req);
     const requestId = genRequestId();
 
-    // Circuit decision before consuming concurrency/queue:
+    // Circuit decision before consuming concurrency/queue
     const decision = this.breaker.allow(key);
     if (!decision.allowed) {
       const err = new CircuitOpenError(key, decision.retryAfterMs ?? 0);
@@ -51,8 +183,7 @@ export class ResilientHttpClient extends EventEmitter {
       await this.limiter.acquire();
     } catch (err) {
       this.emit("request:rejected", { key, requestId, request: req, error: err });
-      // If we were HALF_OPEN and never executed I/O, treat as failure? No.
-      // Queue rejection is local load-shedding; don't punish upstream breaker.
+      // local load shedding shouldn't punish upstream breaker
       throw err;
     }
 
@@ -62,7 +193,7 @@ export class ResilientHttpClient extends EventEmitter {
     try {
       const res = await doHttpRequest(req, this.requestTimeoutMs);
 
-      // classify success/failure for breaker based on status code
+      // classify breaker success/failure (v1 rule: 5xx = failure)
       if (res.status >= 500) {
         const change = this.breaker.onFailure(key);
         if (change.changed) this.emit("breaker:state", { key, from: change.from, to: change.to });
