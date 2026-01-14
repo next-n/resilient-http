@@ -50,9 +50,15 @@ export class ResilientHttpClient extends EventEmitter {
   private readonly breakerKeyFn: (req: ResilientRequest) => string;
 
   // micro-cache
-  private readonly microCache?: Required<Pick<MicroCacheOptions, "enabled" | "ttlMs" | "maxEntries" | "keyFn">>;
+  private readonly microCache?: Required<
+    Pick<MicroCacheOptions, "enabled" | "ttlMs" | "maxEntries" | "keyFn">
+  >;
   private cache?: Map<string, CacheEntry>;
   private inFlight?: Map<string, Promise<ResilientResponse>>;
+
+  // cleanup bookkeeping (micro-cache only)
+  private microCacheReqCount = 0;
+  private readonly cleanupEveryNRequests = 100;
 
   constructor(private readonly opts: ResilientHttpClientOptions) {
     super();
@@ -88,34 +94,50 @@ export class ResilientHttpClient extends EventEmitter {
     return this.existingPipeline(req);
   }
 
+  private cloneResponse(res: ResilientResponse): ResilientResponse {
+    // defensive copies: body + headers (avoid shared mutation between callers)
+    return {
+      status: res.status,
+      headers: { ...res.headers },
+      body: new Uint8Array(res.body),
+    };
+  }
+
+  private maybeCleanupExpired(cache: Map<string, CacheEntry>): void {
+    this.microCacheReqCount++;
+    if (this.microCacheReqCount % this.cleanupEveryNRequests !== 0) return;
+
+    const now = Date.now();
+    for (const [k, v] of cache.entries()) {
+      if (now >= v.expiresAt) cache.delete(k);
+    }
+  }
+
   private async requestWithMicroCache(req: ResilientRequest): Promise<ResilientResponse> {
     const mc = this.microCache!;
     const cache = this.cache!;
     const inFlight = this.inFlight!;
 
+    // periodic sweep (cheap, bounded by maxEntries)
+    this.maybeCleanupExpired(cache);
+
     const key = mc.keyFn(req);
     const now = Date.now();
 
-    // 1) fresh cache hit
+    // 1) fresh cache hit (also clean expired entry for this key)
     const hit = cache.get(key);
-    if (hit && now < hit.expiresAt) {
-      // return a safe copy of body buffer to avoid shared mutation surprises
-      return {
-        status: hit.value.status,
-        headers: hit.value.headers,
-        body: new Uint8Array(hit.value.body),
-      };
+    if (hit) {
+      if (now < hit.expiresAt) {
+        return this.cloneResponse(hit.value);
+      }
+      cache.delete(key);
     }
 
     // 2) singleflight: await existing in-flight
     const existing = inFlight.get(key);
     if (existing) {
       const res = await existing;
-      return {
-        status: res.status,
-        headers: res.headers,
-        body: new Uint8Array(res.body),
-      };
+      return this.cloneResponse(res);
     }
 
     // 3) create new in-flight pipeline call
@@ -127,11 +149,7 @@ export class ResilientHttpClient extends EventEmitter {
         this.evictIfNeeded(cache, mc.maxEntries);
 
         cache.set(key, {
-          value: {
-            status: res.status,
-            headers: res.headers,
-            body: new Uint8Array(res.body), // store a copy
-          },
+          value: this.cloneResponse(res),
           expiresAt: Date.now() + mc.ttlMs,
         });
       }
@@ -143,11 +161,7 @@ export class ResilientHttpClient extends EventEmitter {
 
     try {
       const res = await p;
-      return {
-        status: res.status,
-        headers: res.headers,
-        body: new Uint8Array(res.body),
-      };
+      return this.cloneResponse(res);
     } finally {
       inFlight.delete(key);
     }
