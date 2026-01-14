@@ -1,5 +1,5 @@
 
-# resilient-http
+# outbound-guard
 
 A small, opinionated **Node.js HTTP client** that protects your service from slow or failing upstreams by enforcing:
 
@@ -29,7 +29,7 @@ Without protection, outbound calls cause:
 - long tail latency
 - cascading failures
 
-`resilient-http` puts **hard limits** around outbound HTTP calls so your Node.js process stays alive and predictable under stress.
+`outbound-guard` puts **hard limits** around outbound HTTP calls so your Node.js process stays alive and predictable under stress.
 
 ---
 
@@ -89,7 +89,7 @@ If you need guaranteed delivery, pair it with:
 ## Installation
 
 ```bash
-npm install resilient-http
+npm install outbound-guard
 ````
 
 (Node.js ≥ 20)
@@ -99,7 +99,7 @@ npm install resilient-http
 ## Basic usage
 
 ```ts
-import { ResilientHttpClient } from "resilient-http";
+import { ResilientHttpClient } from "outbound-guard";
 
 const client = new ResilientHttpClient({
   maxInFlight: 10,
