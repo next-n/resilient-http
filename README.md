@@ -156,6 +156,98 @@ If the upstream is:
 
 This design keeps failure behavior honest.
 
+
+Got it 👍
+You want **the same words**, just **clean structure + proper Markdown**, copy-paste ready.
+
+Below is **exactly your text**, only reorganized into clear sections with headers and spacing.
+No rewording, no meaning changes.
+
+---
+
+````md
+## How to tune micro-cache safely
+
+Most users only need to understand **two knobs**.
+
+---
+
+### `maxWaiters`
+
+Controls how many concurrent callers are allowed to wait for the leader.
+
+```ts
+maxWaiters: 10
+````
+
+* Low value → aggressive load shedding
+* High value → tolerate more fan-in
+
+If this fills quickly, it means:
+
+> “This upstream is too slow for current traffic.”
+
+That’s a signal, not a bug.
+
+---
+
+### `followerTimeoutMs`
+
+Controls how long followers are willing to wait once.
+
+```ts
+followerTimeoutMs: 5000
+```
+
+* Followers wait at most once
+* No per-request retries
+* No silent backlog growth
+
+If this expires:
+
+* followers fail fast
+* queues drain
+* breakers can trip
+* the system stays responsive
+
+This prevents **“slow death by waiting”**.
+
+---
+
+## Retry settings (leader-only)
+
+Retries apply **only to the leader**.
+
+```ts
+retry: {
+  maxAttempts: 3,
+  baseDelayMs: 50,
+  maxDelayMs: 200,
+  retryOnStatus: [503],
+}
+```
+
+### What this means
+
+* **`maxAttempts`**
+  total leader tries (including first)
+
+* **`baseDelayMs`**
+  initial backoff
+
+* **`maxDelayMs`**
+  cap on exponential backoff
+
+* **`retryOnStatus`**
+  retry only when the upstream explicitly signals trouble
+
+Followers never retry.
+Retries never multiply under load.
+
+```
+```
+
+
 ### How outbound-guard helps
 
 When `microCache` is enabled:
@@ -219,27 +311,45 @@ npm install outbound-guard
 import { ResilientHttpClient } from "outbound-guard";
 
 const client = new ResilientHttpClient({
-  maxInFlight: 10,
-  maxQueue: 50,
+  maxInFlight: 20,
+  maxQueue: 100,
   enqueueTimeoutMs: 200,
-  requestTimeoutMs: 150,
+  requestTimeoutMs: 5000,
+
   breaker: {
-    windowSize: 30,
+    windowSize: 50,
     minRequests: 10,
     failureThreshold: 0.5,
-    cooldownMs: 800,
+    cooldownMs: 3000,
     halfOpenProbeCount: 3,
   },
+
   microCache: {
-    enabled: true,   // GET-only
-    ttlMs: 1000,     // short-lived
+    enabled: true,
+
+    // short-lived cache window
+    ttlMs: 1000,
+    maxStaleMs: 800,
+
+    // protect against fan-in explosions
+    maxWaiters: 10,
+    followerTimeoutMs: 5000,
+
+    // leader-only retries
+    retry: {
+      maxAttempts: 3,
+      baseDelayMs: 50,
+      maxDelayMs: 200,
+      retryOnStatus: [503],
+    },
   },
 });
 
+
 // Use it instead of fetch/axios directly
-const res = await client.request({
+await client.request({
   method: "GET",
-  url: "https://api.example.com/data",
+  url: "https://third-party.example.com/config",
 });
 
 console.log(res.status, res.body);
@@ -303,7 +413,7 @@ Useful for logs, debugging, or ad-hoc metrics.
 
 ## Demo (local, no deployment)
 
-This repo includes a demo that **visibly shows** backpressure and circuit breaking.
+This repo includes a demo that visibly shows request coalescing, backpressure, and recovery under load.
 
 ### Terminal A — flaky upstream
 
@@ -317,14 +427,33 @@ npm run demo:upstream
 npm run demo:loadgen
 ```
 
-You will see:
+You will see patterns like:
 
-* queue growth and drain
-* request rejections under load
-* circuit breaker opening and half-opening
-* recovery when upstream improves
+=== burst: cold-start ===
+ok-1 ok-1 ok-1 ...
 
-This demo is intentionally noisy to make behavior obvious.
+=== burst: cached ===
+ok-1 ok-1 ok-1 ...
+
+=== burst: refresh-with-stale ===
+ok-1 ok-1 ok-2
+
+=== burst: failure ===
+ok-2 ok-2 ok-2
+
+=== burst: recovered ===
+ok-3 ok-3 ok-4
+
+
+This shows:
+
+only one upstream hit per burst
+
+cached responses during spikes
+
+safe reuse during refresh
+
+fast recovery without restart
 
 ---
 
