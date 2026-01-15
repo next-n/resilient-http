@@ -33,26 +33,54 @@ Without protection, outbound calls cause:
 
 ---
 
-## What this library does
+## What this library does (in practice)
+
+outbound-guard is built around a single idea:
+collapse duplicate work first, then apply limits and breakers.
+
+Most failures don’t come from too many different requests —
+they come from too many identical requests hitting a slow dependency.
+
+This library solves that problem before it escalates.
 
 For every outbound HTTP request, it enforces:
 
-### 1. Concurrency limits
+### 1. GET micro-cache + request coalescing (core feature)
+
+This is the most important feature in `outbound-guard`.
+
+When enabled, identical GET requests are **collapsed into a single upstream call**.
+
+- One request becomes the **leader**
+- All others become **followers**
+- Only **one upstream request** is ever in flight
+- Followers either:
+  - receive cached data immediately, or
+  - fail fast when limits are reached
+
+This prevents the most common real-world failure mode:
+**thundering herds on slow but healthy upstreams**.
+
+This is not long-lived caching.
+It is **short-lived, in-process, burst protection**.
+
+
+### 2. Concurrency limits
 - At most `maxInFlight` requests execute at once.
 - Prevents connection exhaustion and event-loop overload.
 
-### 2. Bounded queue (backpressure)
+### 3. Bounded queue (backpressure)
 - Excess requests wait in a FIFO queue (up to `maxQueue`).
 - If the queue is full → **reject immediately**.
 - If waiting too long → **reject with a timeout**.
 
 Failing early is a feature.
 
-### 3. Request timeouts
+### 4. Request timeouts
 - Every request has a hard timeout via `AbortController`.
 - No hanging promises.
 
-### 4. Circuit breaker (per upstream)
+### 5. Circuit breaker (per upstream)
 For each upstream (by default, per host):
 
 - **CLOSED** → normal operation
@@ -61,39 +89,72 @@ For each upstream (by default, per host):
 
 This prevents hammering unhealthy dependencies.
 
-### 5. Observability hooks
+### 6. Observability hooks
 - Emits lifecycle events (queueing, failures, breaker transitions)
 - Exposes a lightweight `snapshot()` for debugging
 
 No metrics backend required.
 
-### 6. GET micro-cache + request coalescing (optional)
-
-When enabled, outbound-guard can deduplicate identical GET requests:
-
-- Concurrent identical GETs share **one** upstream call.
-- Successful responses are cached for a very short TTL (default: 1s).
-- Only GET requests participate.
-
-This prevents thundering herd effects during spikes and reduces
-third-party API cost without introducing long-lived caching complexity.
 
 ---
-## A real-world failure mode this library prevents
+## The failure mode this library is designed to stop
 
-### Thundering herd on slow GET requests
+#### Thundering herd on slow GET requests
 
-A very common production failure looks like this:
+This is how many production incidents start:
 
-- Your service receives a traffic spike.
-- Many requests trigger the **same GET call** (e.g. config, rates, profile, feature flags).
-- The upstream gets slow (not down — just slow).
-- Node keeps starting identical outbound requests.
-- Connections pile up.
-- Latency explodes.
-- Eventually the process collapses.
+- Traffic spikes
+- Many requests trigger the **same GET**
+- The upstream slows down (not down — just slow)
+- Node starts N identical outbound requests
+- Queues grow, retries multiply, latency explodes
+- Eventually the process collapses
 
-Timeouts and retries don’t help here — they **make it worse**.
+Timeouts and retries don’t fix this.
+They **amplify it**.
+
+### What outbound-guard does differently
+
+With `microCache` enabled:
+
+- Only **one upstream GET** is ever in flight per key
+- All concurrent identical requests share it
+- While refreshing:
+  - previous data is served (within bounds)
+  - or failures surface quickly
+- Retries happen **once**, not per caller
+
+This keeps:
+- upstream traffic flat
+- latency predictable
+- failures visible instead of hidden
+
+This is **request coalescing**, not caching.
+
+## Why the micro-cache is intentionally different
+
+Most HTTP clients do one of two things:
+
+1. Cache aggressively and risk serving bad data
+2. Don’t cache at all and collapse under burst load
+
+`outbound-guard` does neither.
+
+Its micro-cache is:
+- GET-only
+- short-lived
+- bounded by time and memory
+- aware of in-flight requests
+- coordinated with circuit breakers and queues
+
+The goal is **operational stability**, not freshness guarantees.
+
+If the upstream is:
+- slow → callers don’t pile up
+- failing → failures surface quickly
+- recovered → traffic resumes cleanly
+
+This design keeps failure behavior honest.
 
 ### How outbound-guard helps
 

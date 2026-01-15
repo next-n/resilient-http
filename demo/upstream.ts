@@ -1,56 +1,48 @@
 // demo/upstream.ts
 import http from "node:http";
 
-const PORT = Number(process.env.UPSTREAM_PORT ?? 3001);
+let hits = 0;
+const start = Date.now();
 
-// Behavior knobs
-const FAIL_RATE = Number(process.env.FAIL_RATE ?? 0.35); // 35% 500s
-const SLOW_RATE = Number(process.env.SLOW_RATE ?? 0.25); // 25% slow responses
-const SLOW_MS = Number(process.env.SLOW_MS ?? 300);      // slow delay
-
-function rand(): number {
-  return Math.random();
+/**
+ * Deterministic phases (time-based):
+ * 0s..4s    : slow OK (shows singleflight + microcache)
+ * 4s..9s    : fail (503) (shows leader-only retry + breaker + shedding)
+ * 9s..      : recover OK (shows recovery + fresh cache)
+ */
+function modeNow(): "slow-ok" | "fail" | "recover" {
+  const t = Date.now() - start;
+  if (t < 4000) return "slow-ok";
+  if (t < 9000) return "fail";
+  return "recover";
 }
 
-const server = http.createServer((req, res) => {
-  if (!req.url) {
-    res.statusCode = 400;
-    return res.end("bad request");
-  }
+const server = http.createServer((_, res) => {
+  hits += 1;
+  const mode = modeNow();
 
-  if (req.url.startsWith("/health")) {
-    res.statusCode = 200;
-    return res.end("ok");
-  }
+  console.log(`[upstream] hit #${hits} mode=${mode}`);
 
-  const r = rand();
-
-  // Fail
-  if (r < FAIL_RATE) {
-    res.statusCode = 500;
-    res.setHeader("content-type", "application/json");
-    return res.end(JSON.stringify({ ok: false, kind: "fail", ts: Date.now() }));
-  }
-
-  // Slow
-  if (r < FAIL_RATE + SLOW_RATE) {
+  if (mode === "fail") {
+    // Return 503 quickly (retryable)
     setTimeout(() => {
-      res.statusCode = 200;
-      res.setHeader("content-type", "application/json");
-      res.end(JSON.stringify({ ok: true, kind: "slow", ts: Date.now() }));
-    }, SLOW_MS);
+      res.statusCode = 503;
+      res.setHeader("content-type", "text/plain");
+      res.end("upstream failing");
+    }, 100);
     return;
   }
 
-  // Normal
-  res.statusCode = 200;
-  res.setHeader("content-type", "application/json");
-  res.end(JSON.stringify({ ok: true, kind: "fast", ts: Date.now() }));
+  const delay = mode === "slow-ok" ? 1500 : 200;
+
+  setTimeout(() => {
+    res.statusCode = 200;
+    res.setHeader("content-type", "text/plain");
+    res.end(`ok-${mode}-#${hits}`);
+  }, delay);
 });
 
-server.listen(PORT, "127.0.0.1", () => {
-  // eslint-disable-next-line no-console
-  console.log(
-    `[upstream] listening on http://127.0.0.1:${PORT} (FAIL_RATE=${FAIL_RATE}, SLOW_RATE=${SLOW_RATE}, SLOW_MS=${SLOW_MS})`
-  );
+server.listen(3001, () => {
+  console.log("🚧 upstream listening on http://localhost:3001");
+  console.log("phases: 0-4s slow-ok | 4-9s fail(503) | 9s+ recover");
 });

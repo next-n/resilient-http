@@ -1,13 +1,12 @@
+// tsup.config.ts
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts"],
+  entry: ["src/index.ts", "demo/upstream.ts", "demo/loadgen.ts"],
   format: ["esm", "cjs"],
   dts: true,
   sourcemap: true,
   clean: true,
-  target: "es2022",
-  outExtension({ format }) {
-    return { js: format === "cjs" ? ".cjs" : ".js" };
-  },
+  outDir: "dist",
+  splitting: false,
 });

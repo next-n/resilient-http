@@ -1,4 +1,13 @@
-export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
+// src/types.ts
+
+export type HttpMethod =
+  | "GET"
+  | "POST"
+  | "PUT"
+  | "PATCH"
+  | "DELETE"
+  | "HEAD"
+  | "OPTIONS";
 
 export interface ResilientRequest {
   method: HttpMethod;
@@ -16,21 +25,45 @@ export interface ResilientResponse {
 export type BreakerState = "CLOSED" | "OPEN" | "HALF_OPEN";
 
 export interface BreakerOptions {
-  windowSize: number;          // e.g. 50
-  minRequests: number;         // e.g. 20
-  failureThreshold: number;    // 0..1 (e.g. 0.5)
-  cooldownMs: number;          // e.g. 5000
-  halfOpenProbeCount: number;  // e.g. 3
+  windowSize: number; // e.g. 50
+  minRequests: number; // e.g. 20
+  failureThreshold: number; // 0..1 (e.g. 0.5)
+  cooldownMs: number; // e.g. 5000
+  halfOpenProbeCount: number; // e.g. 3
 }
+
+export interface MicroCacheRetryOptions {
+  maxAttempts?: number; // default 3
+  baseDelayMs?: number; // default 50
+  maxDelayMs?: number; // default 200
+  retryOnStatus?: number[]; // default [429, 502, 503, 504]
+}
+
 export interface MicroCacheOptions {
   enabled: boolean;
-  ttlMs?: number;       // default 3000
-  maxEntries?: number;  // default 500
+  ttlMs?: number; // default 1000
+  maxStaleMs?: number; // default 10000
+  maxEntries?: number; // default 500
+
+  /**
+   * Follower protection when NO cache is allowed (cold start / reset):
+   * - maxWaiters caps how many identical callers may wait for the leader
+   * - followerTimeoutMs is a shared window per in-flight refresh:
+   *   once the window closes, new followers fail fast until leader completes.
+   */
+  maxWaiters?: number; // default 1000
+  followerTimeoutMs?: number; // default 5000
+
   /**
    * Default: GET + normalized URL (incl query).
    * Use this to include tenant/user headers if responses vary.
    */
   keyFn?: (req: ResilientRequest) => string;
+
+  /**
+   * Leader-only retries (GET refresh).
+   */
+  retry?: MicroCacheRetryOptions;
 }
 
 export interface ResilientHttpClientOptions {
