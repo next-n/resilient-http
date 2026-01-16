@@ -24,11 +24,7 @@ export class RequestTimeoutError extends ResilientHttpError {
   }
 }
 
-export class CircuitOpenError extends ResilientHttpError {
-  constructor(public readonly key: string, public readonly retryAfterMs: number) {
-    super(`Circuit is OPEN for key="${key}". Retry after ~${retryAfterMs}ms.`);
-  }
-}
+
 
 export class UpstreamError extends ResilientHttpError {
   constructor(public readonly status: number) {

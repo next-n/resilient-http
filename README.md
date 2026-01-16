@@ -6,7 +6,7 @@ A small, opinionated **Node.js HTTP client** that protects your service from slo
 - concurrency limits (in-flight cap)
 - bounded queue (backpressure)
 - request timeouts
-- per-upstream circuit breaker
+
 
 This is a **library**, not a service.  
 It is **process-local**, **in-memory**, and intentionally simple.
@@ -36,7 +36,7 @@ Without protection, outbound calls cause:
 ## What this library does (in practice)
 
 outbound-guard is built around a single idea:
-collapse duplicate work first, then apply limits and breakers.
+collapse duplicate work first, then apply limits.
 
 Most failures don’t come from too many different requests —
 they come from too many identical requests hitting a slow dependency.
@@ -80,16 +80,8 @@ Failing early is a feature.
 - Every request has a hard timeout via `AbortController`.
 - No hanging promises.
 
-### 5. Circuit breaker (per upstream)
-For each upstream (by default, per host):
 
-- **CLOSED** → normal operation
-- **OPEN** → fail fast during cooldown
-- **HALF_OPEN** → limited probe requests to test recovery
-
-This prevents hammering unhealthy dependencies.
-
-### 6. Observability hooks
+### 5. Observability hooks
 - Emits lifecycle events (queueing, failures, breaker transitions)
 - Exposes a lightweight `snapshot()` for debugging
 
@@ -145,7 +137,6 @@ Its micro-cache is:
 - short-lived
 - bounded by time and memory
 - aware of in-flight requests
-- coordinated with circuit breakers and queues
 
 The goal is **operational stability**, not freshness guarantees.
 
@@ -207,7 +198,6 @@ If this expires:
 
 * followers fail fast
 * queues drain
-* breakers can trip
 * the system stays responsive
 
 This prevents **“slow death by waiting”**.
@@ -316,14 +306,6 @@ const client = new ResilientHttpClient({
   enqueueTimeoutMs: 200,
   requestTimeoutMs: 5000,
 
-  breaker: {
-    windowSize: 50,
-    minRequests: 10,
-    failureThreshold: 0.5,
-    cooldownMs: 3000,
-    halfOpenProbeCount: 3,
-  },
-
   microCache: {
     enabled: true,
 
@@ -367,7 +349,6 @@ Errors are **explicit and typed**:
 * `QueueFullError`
 * `QueueTimeoutError`
 * `RequestTimeoutError`
-* `CircuitOpenError`
 
 Example:
 
@@ -388,9 +369,6 @@ try {
 ### Events
 
 ```ts
-client.on("breaker:state", (e) => {
-  console.log(`breaker ${e.key}: ${e.from} -> ${e.to}`);
-});
 
 client.on("request:failure", (e) => {
   console.error("request failed", e.error);

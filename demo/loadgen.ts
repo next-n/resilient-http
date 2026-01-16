@@ -10,13 +10,7 @@ const client = new ResilientHttpClient({
   maxQueue: 20,
   enqueueTimeoutMs: 100,
   requestTimeoutMs: 4000,
-  breaker: {
-    windowSize: 20,
-    minRequests: 5,
-    failureThreshold: 0.5,
-    cooldownMs: 3000,
-    halfOpenProbeCount: 2,
-  },
+
   microCache: {
     enabled: true,
     ttlMs: 1000,
