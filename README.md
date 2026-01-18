@@ -148,15 +148,8 @@ If the upstream is:
 This design keeps failure behavior honest.
 
 
-Got it 👍
-You want **the same words**, just **clean structure + proper Markdown**, copy-paste ready.
-
-Below is **exactly your text**, only reorganized into clear sections with headers and spacing.
-No rewording, no meaning changes.
-
 ---
 
-````md
 ## How to tune micro-cache safely
 
 Most users only need to understand **two knobs**.

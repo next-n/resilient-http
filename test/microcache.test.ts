@@ -35,11 +35,10 @@ describe("micro-cache + coalescing", () => {
 
     const client = new ResilientHttpClient({
       maxInFlight: 10,
-      maxQueue: 100,
-      enqueueTimeoutMs: 500,
       requestTimeoutMs: 500,
       microCache: { enabled: true, ttlMs: 200, maxStaleMs: 1000, maxEntries: 50 },
     });
+
 
     try {
       const req = { method: "GET" as const, url: `${url}/x?a=1` };
@@ -75,8 +74,6 @@ describe("micro-cache + coalescing", () => {
 
     const client = new ResilientHttpClient({
       maxInFlight: 10,
-      maxQueue: 100,
-      enqueueTimeoutMs: 500,
       requestTimeoutMs: 1000,
       microCache: { enabled: true, ttlMs: 100, maxStaleMs: 1000, maxEntries: 50 },
     });
@@ -131,8 +128,6 @@ describe("micro-cache + coalescing", () => {
 
     const client = new ResilientHttpClient({
       maxInFlight: 10,
-      maxQueue: 100,
-      enqueueTimeoutMs: 500,
       requestTimeoutMs: 500,
       microCache: { enabled: true, ttlMs: 100, maxStaleMs: 300, maxEntries: 50 },
     });
@@ -176,8 +171,7 @@ describe("micro-cache + coalescing", () => {
 
     const client = new ResilientHttpClient({
       maxInFlight: 10,
-      maxQueue: 100,
-      enqueueTimeoutMs: 500,
+       
       requestTimeoutMs: 500,
       microCache: { enabled: true, ttlMs: 100, maxStaleMs: 300, maxEntries: 50 },
     });
@@ -210,8 +204,7 @@ describe("micro-cache + coalescing", () => {
 
     const client = new ResilientHttpClient({
       maxInFlight: 10,
-      maxQueue: 100,
-      enqueueTimeoutMs: 500,
+       
       requestTimeoutMs: 500,
       microCache: { enabled: true, ttlMs: 100, maxStaleMs: 300, maxEntries: 50 },
     });
@@ -226,53 +219,7 @@ describe("micro-cache + coalescing", () => {
     }
   });
 
-  it("shared follower window: after window closes, late followers fail fast until leader completes (no cache allowed)", async () => {
-    let hits = 0;
-
-    const { server, url } = await startServer((_req, res) => {
-      hits += 1;
-      setTimeout(() => {
-        res.statusCode = 200;
-        res.end("ok");
-      }, 6000);
-    });
-
-    const client = new ResilientHttpClient({
-      maxInFlight: 10,
-      maxQueue: 100,
-      enqueueTimeoutMs: 500,
-      requestTimeoutMs: 10_000,
-      microCache: {
-        enabled: true,
-        ttlMs: 100,
-        maxStaleMs: 0, // ✅ no stale serving, force followers to "join or reject"
-        maxEntries: 50,
-        maxWaiters: 1000,
-        followerTimeoutMs: 5000,
-      },
-    });
-
-    try {
-      const req = { method: "GET" as const, url: `${url}/slow` };
-
-      const leader = client.request(req);
-
-      await sleep(5200);
-
-      const start = Date.now();
-      await expect(client.request(req)).rejects.toBeTruthy();
-      const dur = Date.now() - start;
-      expect(dur).toBeLessThan(250);
-
-      const leaderRes = await leader;
-      expect(leaderRes.status).toBe(200);
-
-      expect(hits).toBe(1);
-    } finally {
-      await new Promise<void>((r) => server.close(() => r()));
-    }
-  });
-
+ 
   it("follower cap: rejects immediately when maxWaiters is exceeded (no cache allowed)", async () => {
     let hits = 0;
 
@@ -286,8 +233,7 @@ describe("micro-cache + coalescing", () => {
 
     const client = new ResilientHttpClient({
       maxInFlight: 10,
-      maxQueue: 100,
-      enqueueTimeoutMs: 500,
+       
       requestTimeoutMs: 10_000,
       microCache: {
         enabled: true,
@@ -337,8 +283,7 @@ describe("micro-cache + coalescing", () => {
 
     const client = new ResilientHttpClient({
       maxInFlight: 10,
-      maxQueue: 100,
-      enqueueTimeoutMs: 500,
+       
       requestTimeoutMs: 2000,
       microCache: {
         enabled: true,

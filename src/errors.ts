@@ -31,3 +31,18 @@ export class UpstreamError extends ResilientHttpError {
     super(`Upstream returned error status=${status}.`);
   }
 }
+
+
+
+
+export class UpstreamUnhealthyError extends ResilientHttpError {
+  constructor(public readonly baseUrl: string, public readonly state: string) {
+    super(`Upstream is unhealthy (state=${state}, baseUrl=${baseUrl}).`);
+  }
+}
+
+export class HalfOpenRejectedError extends ResilientHttpError {
+  constructor(public readonly baseUrl: string) {
+    super(`Upstream is HALF_OPEN (probe only) for baseUrl=${baseUrl}.`);
+  }
+}

@@ -1,7 +1,7 @@
 // test/limiter.test.ts
 import { describe, expect, it } from "vitest";
 import { ConcurrencyLimiter } from "../src/limiter.js";
-import { QueueFullError, QueueTimeoutError } from "../src/errors.js";
+import { QueueFullError } from "../src/errors.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -9,7 +9,7 @@ function sleep(ms: number): Promise<void> {
 
 describe("ConcurrencyLimiter", () => {
   it("allows up to maxInFlight without queueing", async () => {
-    const lim = new ConcurrencyLimiter({ maxInFlight: 2, maxQueue: 10, enqueueTimeoutMs: 50 });
+    const lim = new ConcurrencyLimiter({ maxInFlight: 2, maxQueue: 10 });
 
     await lim.acquire();
     await lim.acquire();
@@ -24,7 +24,7 @@ describe("ConcurrencyLimiter", () => {
   });
 
   it("queues when maxInFlight reached, and dequeues on release", async () => {
-    const lim = new ConcurrencyLimiter({ maxInFlight: 1, maxQueue: 10, enqueueTimeoutMs: 200 });
+    const lim = new ConcurrencyLimiter({ maxInFlight: 1, maxQueue: 10 });
 
     await lim.acquire(); // occupy only slot
 
@@ -49,7 +49,7 @@ describe("ConcurrencyLimiter", () => {
   });
 
   it("rejects immediately when queue is full", async () => {
-    const lim = new ConcurrencyLimiter({ maxInFlight: 1, maxQueue: 1, enqueueTimeoutMs: 200 });
+    const lim = new ConcurrencyLimiter({ maxInFlight: 1, maxQueue: 1 });
 
     await lim.acquire(); // occupy in-flight
 
@@ -65,19 +65,40 @@ describe("ConcurrencyLimiter", () => {
     lim.release();
   });
 
-  it("rejects with QueueTimeoutError if waiting too long", async () => {
-    const lim = new ConcurrencyLimiter({ maxInFlight: 1, maxQueue: 10, enqueueTimeoutMs: 50 });
+  it("flush() rejects all queued waiters immediately", async () => {
+    const lim = new ConcurrencyLimiter({ maxInFlight: 1, maxQueue: 10 });
 
     await lim.acquire(); // occupy in-flight
 
-    await expect(lim.acquire()).rejects.toBeInstanceOf(QueueTimeoutError);
+    const p1 = lim.acquire(); // queued
+    const p2 = lim.acquire(); // queued
+    await sleep(10);
+
+    expect(lim.snapshot().queueDepth).toBe(2);
+
+    lim.flush(new Error("flushed"));
+
+    await expect(p1).rejects.toBeTruthy();
+    await expect(p2).rejects.toBeTruthy();
+    expect(lim.snapshot().queueDepth).toBe(0);
+
+    // cleanup
+    lim.release();
+  });
+
+  it("acquireNoQueue() starts immediately or fails (no queueing)", async () => {
+    const lim = new ConcurrencyLimiter({ maxInFlight: 1, maxQueue: 10 });
+
+    await lim.acquire(); // occupy
+
+    await expect(lim.acquireNoQueue()).rejects.toBeInstanceOf(QueueFullError);
 
     // cleanup
     lim.release();
   });
 
   it("throws if release called too many times", async () => {
-    const lim = new ConcurrencyLimiter({ maxInFlight: 1, maxQueue: 10, enqueueTimeoutMs: 50 });
+    const lim = new ConcurrencyLimiter({ maxInFlight: 1, maxQueue: 10 });
 
     await lim.acquire();
     lim.release();

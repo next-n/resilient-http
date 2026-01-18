@@ -1,4 +1,5 @@
 // src/types.ts
+
 export type HttpMethod =
   | "GET"
   | "POST"
@@ -18,39 +19,45 @@ export interface ResilientRequest {
 export interface ResilientResponse {
   status: number;
   headers: Record<string, string>;
-  body: Uint8Array; // keep raw; helpers can parse JSON
+  body: Uint8Array;
 }
 
 export interface MicroCacheRetryOptions {
-  maxAttempts?: number; // default 3
-  baseDelayMs?: number; // default 50
-  maxDelayMs?: number; // default 200
-  retryOnStatus?: number[]; // default [503]
+  maxAttempts?: number;     // default 3
+  baseDelayMs?: number;     // default 50
+  maxDelayMs?: number;      // default 200
+  retryOnStatus?: number[]; // default [429, 502, 503, 504]
 }
 
 export interface MicroCacheOptions {
   enabled: boolean;
-  ttlMs?: number;
-  maxStaleMs?: number;
-  maxEntries?: number;
+  ttlMs?: number;          // default 1000
+  maxStaleMs?: number;     // default 10_000
+  maxEntries?: number;     // default 500
 
-  // ⭐ follower controls
-  maxWaiters?: number;          // default 1000
-  followerTimeoutMs?: number;   // default 5000 (shared window)
+  maxWaiters?: number;        // default 1000
+  followerTimeoutMs?: number; // default 5000
 
   keyFn?: (req: ResilientRequest) => string;
   retry?: MicroCacheRetryOptions;
 }
 
+export interface HealthOptions {
+  enabled?: boolean; // default true
+}
 
 export interface ResilientHttpClientOptions {
+  /**
+   * Applied per base URL (scheme + host + port).
+   */
   maxInFlight: number;
-  maxQueue: number;
-  enqueueTimeoutMs: number;
-  requestTimeoutMs: number;
 
   /**
-   * GET-only micro-cache + request coalescing.
+   * Per-attempt timeout.
    */
+  requestTimeoutMs: number;
+
+  health?: HealthOptions;
+
   microCache?: MicroCacheOptions;
 }
