@@ -61,3 +61,28 @@ export interface ResilientHttpClientOptions {
 
   microCache?: MicroCacheOptions;
 }
+
+export type InstantGetOnError = "stop" | { retry: number };
+
+export interface InstantGetOptions {
+  intervalMs?: number; // default 5000
+  onError?: InstantGetOnError; // default { retry: Infinity }
+}
+
+export interface InstantGetSnapshot {
+  url: string;
+  running: boolean;
+  intervalMs: number;
+
+  lastOkAt?: number;
+  lastStatus?: number;
+
+  lastErrorName?: string;
+  consecutiveErrors: number;
+
+  inFlight: boolean;
+  ready: boolean;
+  nextDelayMs?: number;
+}
+
+

@@ -1,6 +1,6 @@
 {
   "name": "@nextn/outbound-guard",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -9,9 +9,9 @@
   "sideEffects": false,
   "exports": {
     ".": {
-      "types": "./dist/src/index.d.ts",
-      "import": "./dist/src/index.js",
-      "require": "./dist/src/index.cjs"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
     }
   },
 

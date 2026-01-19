@@ -219,6 +219,18 @@ export class ResilientHttpClient extends EventEmitter {
     }
     return this.execute(req, { allowProbe: false });
   }
+   /**
+   * Run a HALF_OPEN probe. Exactly one probe is allowed per HALF_OPEN window.
+   * Normal request() calls are rejected during HALF_OPEN.
+   */
+   async probe(req: ResilientRequest): Promise<ResilientResponse> {
+    if (this.microCache?.enabled && req.method === "GET" && req.body == null) {
+      // microcache path already supports probe, but keep consistent behavior:
+      // force direct execute so this call is always a real probe attempt.
+      return this.execute(req, { allowProbe: true });
+    }
+    return this.execute(req, { allowProbe: true });
+  }
 
   snapshot(): { inFlight: number; queueDepth: number } {
     let inFlight = 0;
@@ -375,14 +387,16 @@ export class ResilientHttpClient extends EventEmitter {
 
     const requestId = genRequestId();
     const start = Date.now();
-
+    let acquired = false;
     try {
       // Probes should not wait in queue.
       if (this.healthEnabled && h.state === "HALF_OPEN") {
         await limiter.acquireNoQueue();
       } else {
         await limiter.acquire();
+
       }
+      acquired = true;
     } catch (err) {
       this.emit("request:rejected", { requestId, request: req, error: err });
       throw err;
@@ -428,7 +442,7 @@ export class ResilientHttpClient extends EventEmitter {
       if (this.healthEnabled && h.state === "HALF_OPEN") {
         h.probeInFlight = false;
       }
-      limiter.release();
+      if (acquired) limiter.release();
     }
   }
 

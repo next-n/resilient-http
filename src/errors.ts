@@ -46,3 +46,4 @@ export class HalfOpenRejectedError extends ResilientHttpError {
     super(`Upstream is HALF_OPEN (probe only) for baseUrl=${baseUrl}.`);
   }
 }
+
